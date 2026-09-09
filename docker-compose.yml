@@ -1,0 +1,14 @@
+services:
+  blackboard:
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - blackboard_data:/data
+    environment:
+      - BLACKBOARD_API_KEY=${BLACKBOARD_API_KEY:-}
+      - BLACKBOARD_REAPER_INTERVAL=${BLACKBOARD_REAPER_INTERVAL:-60s}
+    restart: unless-stopped
+
+volumes:
+  blackboard_data:
