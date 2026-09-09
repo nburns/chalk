@@ -4,13 +4,7 @@
 
 **Chalk has no authentication.** It is designed to run locally and trusts all callers equally.
 
-By default the server binds to `127.0.0.1` and is only reachable from the same machine. Do not expose it to a network without understanding what that means — any process or person that can reach the port can read, write, and delete board entries.
-
-To bind to all interfaces intentionally (e.g. a shared team server on a trusted LAN):
-
-```sh
-BLACKBOARD_HOST=0.0.0.0 ./chalk
-```
+By default the server binds to `127.0.0.1` and is only reachable from the same machine. To bind to a non-local address (e.g. a shared team server on a trusted LAN), `BLACKBOARD_API_KEY` is required — the server will refuse to start without it.
 
 **Hard delete** requires callers to pass `instructed_by_human=true`. This is a convention, not enforced authentication — any client can assert it. Hard deletes are logged to stderr. If you need a real audit trail, pipe the server's output to a log file.
 
@@ -20,13 +14,13 @@ BLACKBOARD_HOST=0.0.0.0 ./chalk
 
 ### API key for remote access
 
-To require authentication, set `BLACKBOARD_API_KEY` on the server before starting:
+Set `BLACKBOARD_API_KEY` before starting the server:
 
 ```sh
 BLACKBOARD_HOST=0.0.0.0 BLACKBOARD_API_KEY=your-secret-key ./chalk
 ```
 
-The server checks `Authorization: Bearer <key>` on every request and returns 401 if it doesn't match. If the key is not set and the server is bound to a non-local address, a warning is logged at startup.
+The server checks `Authorization: Bearer <key>` on every request and returns 401 if it doesn't match. `BLACKBOARD_API_KEY` is required when `BLACKBOARD_HOST` is anything other than `127.0.0.1` or `localhost` — the server will exit at startup without it.
 
 The key is compared in constant time to prevent timing attacks.
 

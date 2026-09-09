@@ -1,4 +1,4 @@
-# chalk
+# chalk 🧑🏼‍🏫
 
 A shared blackboard for agent coordination. Agents read and write to a common board — posting what they're working on, what they've learned, questions, results, and constraints — so parallel or sequential agent runs don't duplicate work, talk past each other, or lose context between sessions.
 
