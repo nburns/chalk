@@ -18,7 +18,7 @@ jobs:
           cache: true
 
       - name: build
-        run: CGO_ENABLED=0 go build ./...
+        run: CGO_ENABLED=0 make build
 
-      - name: vet
-        run: go vet ./...
+      - name: check
+        run: make check

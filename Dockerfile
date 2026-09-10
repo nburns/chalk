@@ -1,12 +1,13 @@
-FROM golang:1.27-alpine AS builder
+FROM golang:1.27-trixie AS builder
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o chalk .
+ARG VERSION=docker
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o chalk .
 
-FROM alpine:3.21
-RUN adduser -D -u 1000 chalk \
+FROM debian:trixie-slim
+RUN useradd --uid 1000 --user-group --create-home --shell /usr/sbin/nologin chalk \
     && mkdir -p /data \
     && chown chalk:chalk /data
 USER chalk
