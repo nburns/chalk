@@ -140,10 +140,13 @@ claude mcp add --transport http --scope user blackboard http://localhost:8080/mc
 
 The key is stored in plaintext in `~/.claude/mcp.json`, protected by file permissions. Treat it like any other API token in a dotfile.
 
-To orient Claude on the blackboard conventions before it starts work, pull the built-in prompt:
+The server sends its coordination conventions to every client as MCP server
+instructions on connect, so an agent starts out knowing how the board works
+without being told. The same text is also available as a prompt, for re-reading
+it mid-session or pulling it up yourself:
 
 ```
-> Before starting, read the board-usage prompt from the blackboard MCP server, then check stats and read the current board.
+> Read the board-usage prompt from the blackboard MCP server, then check stats and read the current board.
 ```
 
 ## Claude Desktop

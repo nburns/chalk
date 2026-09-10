@@ -117,7 +117,12 @@ func runReaper(ctx context.Context, d *DB, interval time.Duration) {
 }
 
 func newMCPServer(db *DB) *mcp.Server {
-	srv := mcp.NewServer(&mcp.Implementation{Name: "blackboard", Version: version}, nil)
+	srv := mcp.NewServer(
+		&mcp.Implementation{Name: "blackboard", Version: version},
+		// Sent to clients on initialize, so an agent gets the coordination
+		// conventions without a human having to ask for the prompt first.
+		&mcp.ServerOptions{Instructions: boardUsagePrompt},
+	)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "post",
