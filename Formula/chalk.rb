@@ -30,7 +30,5 @@ class Chalk < Formula
     assert_match "blackboard", output
   ensure
     Process.kill("TERM", pid)
-  rescue StandardError
-    nil
   end
 end
