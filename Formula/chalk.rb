@@ -1,10 +1,9 @@
 class Chalk < Formula
   desc "Shared blackboard MCP server for agent coordination"
   homepage "https://github.com/nburns/chalk"
-  license "MIT"
   url "https://github.com/nburns/chalk/archive/refs/tags/v0.1.0.tar.gz"
   sha256 "0019dfc4b32d63c1392aa264aed2253c1e0c2fb09216f8e2cc269bbfb8bb49b5"
-  version "0.1.0"
+  license "MIT"
   head "https://github.com/nburns/chalk.git", branch: "main"
 
   depends_on "go" => :build
@@ -22,7 +21,7 @@ class Chalk < Formula
     keep_alive true
     log_path var/"log/chalk.log"
     error_log_path var/"log/chalk.log"
-    environment_variables BLACKBOARD_DB: var/"chalk/board.db",
+    environment_variables BLACKBOARD_DB:   var/"chalk/board.db",
                           BLACKBOARD_HOST: "127.0.0.1",
                           BLACKBOARD_PORT: "8080"
   end
