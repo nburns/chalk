@@ -2,7 +2,7 @@ class Chalk < Formula
   desc "Shared blackboard MCP server for agent coordination"
   homepage "https://github.com/nburns/chalk"
   url "https://github.com/nburns/chalk/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "0019dfc4b32d63c1392aa264aed2253c1e0c2fb09216f8e2cc269bbfb8bb49b5"
+  sha256 "96c4583072fc3af5644e2ae593f0012051ab1b287996c496f8d30c243e5378a3"
   license "MIT"
   head "https://github.com/nburns/chalk.git", branch: "main"
 
