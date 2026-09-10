@@ -94,6 +94,10 @@ func openDB(path string) (*DB, error) {
 	return d, nil
 }
 
+func (d *DB) Close() error {
+	return d.db.Close()
+}
+
 func (d *DB) migrate() error {
 	tx, err := d.db.Begin()
 	if err != nil {

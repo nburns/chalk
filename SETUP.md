@@ -64,86 +64,61 @@ docker logs -f blackboard
 
 ## Running chalk as a background service
 
-### launchd (Mac)
-
-Create `~/Library/LaunchAgents/com.chalk.blackboard.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.chalk.blackboard</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/usr/local/bin/chalk</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>BLACKBOARD_PORT</key>
-    <string>8080</string>
-    <key>BLACKBOARD_API_KEY</key>
-    <string>your-secret-key</string>
-  </dict>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>/tmp/chalk.log</string>
-  <key>StandardErrorPath</key>
-  <string>/tmp/chalk.log</string>
-</dict>
-</plist>
-```
-
-Update `ProgramArguments` to the path where you installed the binary. Then load it:
+chalk installs itself into whatever service manager the platform provides —
+launchd on macOS, systemd on Linux. There is no plist or unit file to write by
+hand:
 
 ```sh
-launchctl load ~/Library/LaunchAgents/com.chalk.blackboard.plist
+chalk service install
+chalk service start
+chalk service status
 ```
 
-To stop or unload:
+The service is installed per-user (`~/Library/LaunchAgents` on macOS,
+`~/.config/systemd/user` on Linux), so it needs no root, starts at login, and
+restarts if the process dies.
+
+`chalk service install` records the `BLACKBOARD_*` variables set in that shell
+into the service definition, which is how the service keeps its configuration
+across restarts:
 
 ```sh
-launchctl unload ~/Library/LaunchAgents/com.chalk.blackboard.plist
+BLACKBOARD_PORT=9000 BLACKBOARD_API_KEY=your-secret-key chalk service install
 ```
 
-### systemd (Linux)
+Note that an API key set this way is written into the service definition in
+plaintext, protected only by file permissions — the same tradeoff as any secret
+in a dotfile. chalk warns when it does this.
 
-Create `/etc/systemd/system/chalk.service`:
-
-```ini
-[Unit]
-Description=chalk blackboard MCP server
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/chalk
-Environment=BLACKBOARD_PORT=8080
-Environment=BLACKBOARD_API_KEY=your-secret-key
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-```
-
-Update `ExecStart` to the path where you installed the binary. Then enable and start:
+To change configuration later, reinstall:
 
 ```sh
-systemctl daemon-reload
-systemctl enable chalk
-systemctl start chalk
+chalk service uninstall
+BLACKBOARD_PORT=9001 chalk service install
+chalk service start
 ```
 
-To check status or view logs:
+The service runs whichever binary you installed it from, recorded as an absolute
+path. If you move or rebuild the binary somewhere else, reinstall the service.
+
+**Logs:**
 
 ```sh
-systemctl status chalk
-journalctl -u chalk -f
+tail -f ~/Library/Logs/com.chalk.blackboard.err.log    # macOS
+journalctl --user -u com.chalk.blackboard -f           # Linux
 ```
+
+Startup messages go to stderr, so the `.err.log` file is the interesting one on
+macOS.
+
+**Removal:**
+
+```sh
+chalk service uninstall
+```
+
+The board database is not touched; delete `~/.blackboard/board.db` yourself if
+you want the data gone.
 
 ## Claude Code
 

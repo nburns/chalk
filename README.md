@@ -28,19 +28,58 @@ A shared blackboard for agent coordination. Agents read and write to a common bo
 
 ## Setup
 
-**Build:**
+Requires Go 1.27 or newer. Nothing else — no CGO, no system SQLite, no broker.
+
+**Build and install:**
 
 ```sh
 git clone <repo>
 cd chalk
-go build -o chalk .
+make install
 ```
 
-**Run:**
+That builds the binary and installs it to `~/.local/bin/chalk`. Install somewhere
+else with `make install PREFIX=/usr/local` (that path needs `sudo make install
+PREFIX=/usr/local`).
+
+**Run it in the foreground:**
 
 ```sh
-./chalk
-# blackboard listening on http://localhost:8080/mcp  db=/Users/you/.blackboard/board.db
+chalk
+# blackboard listening on http://127.0.0.1:8080/mcp  db=/Users/you/.blackboard/board.db
+```
+
+**Or run it in the background,** so the board is up whenever an agent looks for it:
+
+```sh
+chalk service install
+chalk service start
+```
+
+This registers a per-user background service — a launchd agent on macOS, a
+systemd user unit on Linux — that starts at login and restarts if it crashes.
+`make service` does the build, install, and start in one step.
+
+| command | effect |
+|---|---|
+| `chalk service install` | register the service (records your current `BLACKBOARD_*` settings) |
+| `chalk service start` / `stop` / `restart` | control it |
+| `chalk service status` | report `running`, `stopped`, or that it isn't installed |
+| `chalk service uninstall` | remove it; the board database is left alone |
+
+Because install captures the environment it runs in, set any configuration in
+the same command:
+
+```sh
+BLACKBOARD_PORT=9000 chalk service install
+```
+
+To change settings later, run `chalk service uninstall` and install again.
+
+**Uninstall everything:**
+
+```sh
+make uninstall   # stops and removes the service, then removes the binary
 ```
 
 The server persists data to `~/.blackboard/board.db` by default and listens on port `8080`. Both are configurable via environment variables (see Configuration below).
@@ -124,5 +163,5 @@ Agent A posts a hypothesis: "The N+1 query is in the user serializer." Agent B, 
 | `BLACKBOARD_DB` | `~/.blackboard/board.db` | path to SQLite database |
 | `BLACKBOARD_HOST` | `127.0.0.1` | address to bind to; set to `0.0.0.0` to expose on the network |
 | `BLACKBOARD_PORT` | `8080` | port to listen on |
-| `BLACKBOARD_API_KEY` | _(none)_ | if set, all requests must carry `Authorization: Bearer <key>`; server warns at startup if unset and host is non-local |
+| `BLACKBOARD_API_KEY` | _(none)_ | if set, all requests must carry `Authorization: Bearer <key>`; the server exits at startup if unset and the host is non-local |
 | `BLACKBOARD_REAPER_INTERVAL` | `60s` | how often to archive expired `working_on` entries |

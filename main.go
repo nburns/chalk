@@ -3,18 +3,88 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
+	"runtime"
+	"strings"
 	"time"
 
+	"github.com/kardianos/service"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	_ "modernc.org/sqlite"
 )
+
+const (
+	serviceName   = "com.chalk.blackboard"
+	shutdownGrace = 5 * time.Second
+)
+
+var version = "dev"
+
+type config struct {
+	dbPath         string
+	host           string
+	port           string
+	apiKey         string
+	reaperInterval time.Duration
+}
+
+func (c config) addr() string { return c.host + ":" + c.port }
+
+func (c config) localOnly() bool { return c.host == "127.0.0.1" || c.host == "localhost" }
+
+func loadConfig() (config, error) {
+	dbPath := os.Getenv("BLACKBOARD_DB")
+	if dbPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return config{}, fmt.Errorf("home dir: %w", err)
+		}
+		dbPath = filepath.Join(home, ".blackboard", "board.db")
+	}
+
+	cfg := config{
+		dbPath:         dbPath,
+		host:           def(os.Getenv("BLACKBOARD_HOST"), "127.0.0.1"),
+		port:           def(os.Getenv("BLACKBOARD_PORT"), "8080"),
+		apiKey:         os.Getenv("BLACKBOARD_API_KEY"),
+		reaperInterval: 60 * time.Second,
+	}
+
+	if s := os.Getenv("BLACKBOARD_REAPER_INTERVAL"); s != "" {
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			return config{}, fmt.Errorf("BLACKBOARD_REAPER_INTERVAL: %w", err)
+		}
+		cfg.reaperInterval = d
+	}
+
+	if cfg.apiKey == "" && !cfg.localOnly() {
+		return config{}, fmt.Errorf("BLACKBOARD_API_KEY must be set when binding to %s", cfg.host)
+	}
+
+	return cfg, nil
+}
+
+// env returns the resolved config as the variables a service definition needs,
+// so an installed service keeps running the settings it was installed with.
+func (c config) env() map[string]string {
+	vars := map[string]string{
+		"BLACKBOARD_DB":              c.dbPath,
+		"BLACKBOARD_HOST":            c.host,
+		"BLACKBOARD_PORT":            c.port,
+		"BLACKBOARD_REAPER_INTERVAL": c.reaperInterval.String(),
+	}
+	if c.apiKey != "" {
+		vars["BLACKBOARD_API_KEY"] = c.apiKey
+	}
+	return vars
+}
 
 func requireBearer(key string, next http.Handler) http.Handler {
 	expected := []byte("Bearer " + key)
@@ -46,40 +116,8 @@ func runReaper(ctx context.Context, d *DB, interval time.Duration) {
 	}
 }
 
-func main() {
-	dbPath := os.Getenv("BLACKBOARD_DB")
-	if dbPath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			log.Fatalf("home dir: %v", err)
-		}
-		dbPath = filepath.Join(home, ".blackboard", "board.db")
-	}
-
-	host := def(os.Getenv("BLACKBOARD_HOST"), "127.0.0.1")
-	port := def(os.Getenv("BLACKBOARD_PORT"), "8080")
-	apiKey := os.Getenv("BLACKBOARD_API_KEY")
-
-	reaperInterval := 60 * time.Second
-	if s := os.Getenv("BLACKBOARD_REAPER_INTERVAL"); s != "" {
-		d, err := time.ParseDuration(s)
-		if err != nil {
-			log.Fatalf("BLACKBOARD_REAPER_INTERVAL: %v", err)
-		}
-		reaperInterval = d
-	}
-
-	db, err := openDB(dbPath)
-	if err != nil {
-		log.Fatalf("db: %v", err)
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	go runReaper(ctx, db, reaperInterval)
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "blackboard", Version: "1.0.0"}, nil)
+func newMCPServer(db *DB) *mcp.Server {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "blackboard", Version: version}, nil)
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "post",
@@ -146,42 +184,280 @@ func main() {
 		Description: "Coordination conventions for using the blackboard — read this before posting.",
 	}, handleBoardUsage)
 
-	handler := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server {
-		return srv
-	}, nil)
+	return srv
+}
 
-	mux := http.NewServeMux()
-	mux.Handle("/mcp", handler)
+type program struct {
+	cfg     config
+	db      *DB
+	httpSrv *http.Server
+	cancel  context.CancelFunc
+	served  chan struct{}
+}
 
-	var rootHandler http.Handler = mux
-	if apiKey != "" {
-		rootHandler = requireBearer(apiKey, mux)
-		log.Printf("API key authentication enabled")
-	} else if host != "127.0.0.1" && host != "localhost" {
-		log.Fatalf("BLACKBOARD_API_KEY must be set when binding to %s", host)
+// Start must not block: it binds the port synchronously so that a failure is
+// reported to the service manager, then serves in the background.
+func (p *program) Start(service.Service) error {
+	db, err := openDB(p.cfg.dbPath)
+	if err != nil {
+		return fmt.Errorf("db: %w", err)
 	}
 
-	addr := host + ":" + port
-	httpSrv := &http.Server{
-		Addr:         addr,
-		Handler:      rootHandler,
+	ln, err := net.Listen("tcp", p.cfg.addr())
+	if err != nil {
+		db.Close()
+		return fmt.Errorf("listen %s: %w", p.cfg.addr(), err)
+	}
+
+	srv := newMCPServer(db)
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+		return srv
+	}, nil))
+
+	var root http.Handler = mux
+	if p.cfg.apiKey != "" {
+		root = requireBearer(p.cfg.apiKey, mux)
+		log.Printf("API key authentication enabled")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	p.db = db
+	p.cancel = cancel
+	p.served = make(chan struct{})
+	p.httpSrv = &http.Server{
+		Handler:      root,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
-	log.Printf("blackboard listening on http://%s/mcp  db=%s", addr, dbPath)
+	go runReaper(ctx, db, p.cfg.reaperInterval)
 
 	go func() {
-		<-ctx.Done()
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := httpSrv.Shutdown(shutCtx); err != nil {
-			log.Printf("shutdown: %v", err)
+		defer close(p.served)
+		err := p.httpSrv.Serve(ln)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			// The listener is gone but the process is not; exit so the service
+			// manager restarts us instead of leaving a server that serves nothing.
+			log.Printf("serve: %v", err)
+			os.Exit(1)
 		}
 	}()
 
-	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("listen: %v", err)
+	log.Printf("blackboard %s listening on http://%s/mcp  db=%s", version, p.cfg.addr(), p.cfg.dbPath)
+	return nil
+}
+
+func (p *program) Stop(service.Service) error {
+	if p.cancel != nil {
+		p.cancel()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	defer cancel()
+
+	var errs []error
+	if p.httpSrv != nil {
+		if err := p.httpSrv.Shutdown(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("shutdown: %w", err))
+		}
+		<-p.served
+	}
+	if p.db != nil {
+		if err := p.db.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close db: %w", err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// The stock unit template from the service library ends in
+// WantedBy=multi-user.target, a target the systemd user manager never
+// activates, so an installed user service would never start at login. This is
+// that template with the user manager's boot target and a restart delay closer
+// to what launchd does on macOS. Ignored on platforms that are not systemd.
+const systemdUserUnit = `[Unit]
+Description={{Description}}
+ConditionFileIsExecutable={{Path | cmdEscape}}
+{{range Dependencies}}{{.}}
+{{end}}
+[Service]
+StartLimitInterval=5
+StartLimitBurst=10
+ExecStart={{Path | cmdEscape}}{{range Arguments}} {{. | cmd}}{{end}}
+{{if ChRoot}}RootDirectory={{ChRoot | cmd}}
+{{end}}{{if WorkingDirectory}}WorkingDirectory={{WorkingDirectory | cmdEscape}}
+{{end}}{{if UserName}}User={{UserName}}
+{{end}}{{if ReloadSignal}}ExecReload=/bin/kill -{{ReloadSignal}} "$MAINPID"
+{{end}}{{if PIDFile}}PIDFile={{PIDFile | cmd}}
+{{end}}{{if OutputFileSupport}}StandardOutput=file:{{LogDirectory}}/{{Name}}.out
+StandardError=file:{{LogDirectory}}/{{Name}}.err
+{{end}}{{if LimitNOFILE}}LimitNOFILE={{LimitNOFILE}}
+{{end}}{{if Restart}}Restart={{Restart}}
+{{end}}{{if SuccessExitStatus}}SuccessExitStatus={{SuccessExitStatus}}
+{{end}}RestartSec=5
+EnvironmentFile=-/etc/sysconfig/{{Name}}
+
+{{range EnvVars}}{{.}}
+{{end}}[Install]
+WantedBy=default.target
+`
+
+// logDirectory keeps service logs somewhere conventional for the platform.
+// Only launchd consumes it; systemd services log to the journal.
+func logDirectory() string {
+	if runtime.GOOS != "darwin" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, "Library", "Logs")
+}
+
+func newService(cfg config) (service.Service, error) {
+	return service.New(&program{cfg: cfg}, &service.Config{
+		Name:        serviceName,
+		DisplayName: "chalk blackboard",
+		Description: "Shared blackboard MCP server for agent coordination.",
+		EnvVars:     cfg.env(),
+		Option: service.KeyValue{
+			"UserService":   true,
+			"RunAtLoad":     true,
+			"KeepAlive":     true,
+			"LogDirectory":  logDirectory(),
+			"SystemdScript": systemdUserUnit,
+		},
+	})
+}
+
+const usage = `chalk - a shared blackboard MCP server for agent coordination
+
+usage:
+  chalk                      run in the foreground (ctrl-c to stop)
+  chalk service install      install and enable a per-user background service
+  chalk service uninstall    remove the service
+  chalk service start        start the installed service
+  chalk service stop         stop the installed service
+  chalk service restart      restart the installed service
+  chalk service status       report whether the service is running
+  chalk version              print the version
+
+environment:
+  BLACKBOARD_DB                database path (default: ~/.blackboard/board.db)
+  BLACKBOARD_HOST              bind address (default: 127.0.0.1)
+  BLACKBOARD_PORT              port (default: 8080)
+  BLACKBOARD_API_KEY           require 'Authorization: Bearer <key>'; required
+                               unless the bind address is local
+  BLACKBOARD_REAPER_INTERVAL   how often expired working_on entries are
+                               archived (default: 1m)
+
+'chalk service install' records the current values of those variables in the
+service definition, so set them in the same command:
+
+  BLACKBOARD_PORT=9000 chalk service install
+`
+
+func statusText(s service.Status) string {
+	switch s {
+	case service.StatusRunning:
+		return "running"
+	case service.StatusStopped:
+		return "stopped"
+	default:
+		return "unknown"
+	}
+}
+
+func runServiceCommand(svc service.Service, cfg config, action string) error {
+	if action == "status" {
+		st, err := svc.Status()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s: %s\n", serviceName, statusText(st))
+		return nil
+	}
+
+	valid := false
+	for _, a := range service.ControlAction {
+		if a == action {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return fmt.Errorf("unknown service command %q (want: %s, status)", action, strings.Join(service.ControlAction[:], ", "))
+	}
+
+	if err := service.Control(svc, action); err != nil {
+		return err
+	}
+
+	switch action {
+	case "install":
+		exe, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolve executable: %w", err)
+		}
+		fmt.Printf("installed %s\n", serviceName)
+		fmt.Printf("  binary    %s\n", exe)
+		fmt.Printf("  endpoint  http://%s/mcp\n", cfg.addr())
+		fmt.Printf("  database  %s\n", cfg.dbPath)
+		if dir := logDirectory(); dir != "" {
+			fmt.Printf("  logs      %s/%s.out.log\n", dir, serviceName)
+		}
+		if cfg.apiKey != "" {
+			fmt.Println("  warning: BLACKBOARD_API_KEY is stored in the service definition in plaintext")
+		}
+		fmt.Println("\nstart it with: chalk service start")
+	default:
+		fmt.Printf("%s: %s\n", action, serviceName)
+	}
+	return nil
+}
+
+func run() error {
+	args := os.Args[1:]
+
+	if len(args) > 0 {
+		switch args[0] {
+		case "help", "-h", "--help":
+			fmt.Print(usage)
+			return nil
+		case "version", "-v", "--version":
+			fmt.Printf("chalk %s\n", version)
+			return nil
+		case "service":
+			if len(args) != 2 {
+				return errors.New("usage: chalk service install|uninstall|start|stop|restart|status")
+			}
+		default:
+			return fmt.Errorf("unknown command %q (try 'chalk help')", args[0])
+		}
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+
+	svc, err := newService(cfg)
+	if err != nil {
+		return err
+	}
+
+	if len(args) > 0 {
+		return runServiceCommand(svc, cfg, args[1])
+	}
+	return svc.Run()
+}
+
+func main() {
+	log.SetFlags(log.LstdFlags)
+	if err := run(); err != nil {
+		log.Fatal(err)
 	}
 }
