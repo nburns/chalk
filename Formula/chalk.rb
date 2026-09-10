@@ -29,6 +29,8 @@ class Chalk < Formula
     output = shell_output("curl -sf http://127.0.0.1:#{port}/mcp 2>&1 || true")
     assert_match "blackboard", output
   ensure
-    Process.kill("TERM", pid) rescue nil
+    Process.kill("TERM", pid)
+  rescue StandardError
+    nil
   end
 end
