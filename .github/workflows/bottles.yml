@@ -1,0 +1,44 @@
+name: Bottles
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15       # arm64 (Sequoia)
+          - runner: macos-13       # x86_64 (Ventura)
+          - runner: ubuntu-24.04       # linux x86_64
+          - runner: ubuntu-24.04-arm  # linux arm64
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
+      - name: Tap this repo
+        run: brew tap nburns/chalk "$GITHUB_WORKSPACE"
+
+      - name: Install from HEAD
+        run: brew install --HEAD --build-bottle nburns/chalk/chalk
+
+      - name: Build bottle
+        run: |
+          brew bottle \
+            --json \
+            --root-url "https://github.com/nburns/chalk/releases/download/edge" \
+            nburns/chalk/chalk
+
+      - name: Upload bottle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bottle-${{ matrix.runner }}
+          path: "*.bottle.*"
+          if-no-files-found: error
