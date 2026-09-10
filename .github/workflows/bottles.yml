@@ -12,7 +12,8 @@ jobs:
         include:
           - runner: macos-15       # arm64 (Sequoia)
           - runner: macos-13       # x86_64 (Ventura)
-          - runner: ubuntu-24.04   # linux x86_64
+          - runner: ubuntu-24.04       # linux x86_64
+          - runner: ubuntu-24.04-arm  # linux arm64
 
     runs-on: ${{ matrix.runner }}
 
