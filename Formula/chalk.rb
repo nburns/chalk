@@ -19,7 +19,9 @@ class Chalk < Formula
     keep_alive true
     log_path var/"log/chalk.log"
     error_log_path var/"log/chalk.log"
-    environment_variables BLACKBOARD_DB: var/"chalk/board.db"
+    environment_variables BLACKBOARD_DB: var/"chalk/board.db",
+                          BLACKBOARD_HOST: "127.0.0.1",
+                          BLACKBOARD_PORT: "8080"
   end
 
   test do
