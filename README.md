@@ -28,61 +28,46 @@ A shared blackboard for agent coordination. Agents read and write to a common bo
 
 ## Install
 
-Two ways in: the Homebrew tap, or a build from source. Both produce the same
-single static binary — no CGO, no system SQLite, no broker.
-
-### Homebrew
-
-The formula lives in this repo rather than a `homebrew-chalk` repo, so the tap
-needs the URL spelled out once:
-
 ```sh
 brew tap nburns/chalk https://github.com/nburns/chalk
 brew install nburns/chalk/chalk
 ```
 
-Works on macOS and on Linux under Homebrew. To track `main` instead of the
-latest tagged release, install `--HEAD`:
+Run it in the background (launchd on macOS, systemd on Linux):
 
 ```sh
-brew install --HEAD nburns/chalk/chalk
+brew services start chalk
 ```
 
-Upgrade and removal are the usual:
+Check it:
 
 ```sh
-brew upgrade chalk
-brew uninstall chalk        # leaves the board database alone
-brew untap nburns/chalk
+curl -s http://127.0.0.1:8080/mcp
+brew services info chalk
 ```
 
-### From source
-
-Requires Go 1.27 or newer.
-
-```sh
-git clone https://github.com/nburns/chalk
-cd chalk
-make install
-```
-
-That builds the binary and installs it to `~/.local/bin/chalk`. Install somewhere
-else with `make install PREFIX=/usr/local` (that path needs `sudo make install
-PREFIX=/usr/local`).
-
-**Run it in the foreground:**
+Or run it in the foreground:
 
 ```sh
 chalk
 # blackboard listening on http://127.0.0.1:8080/mcp  db=/Users/you/.blackboard/board.db
 ```
 
-## Running in the background
+### Upgrade and uninstall
 
-The board should be up whenever an agent looks for it, which means a service
-that starts at login and restarts on crash. chalk registers itself with the
-platform's service manager — launchd on macOS, a systemd **user** unit on Linux
-— so there is no plist or unit file to write by hand:
+```sh
+brew upgrade chalk
+brew services stop chalk
+brew uninstall chalk
+```
+
+The database is left behind; delete it yourself if you want the data gone.
+
+### Service without Homebrew
+
+`chalk service install` registers the same background service — a launchd agent
+on macOS, a systemd user unit on Linux — using the `BLACKBOARD_*` variables set
+in that shell:
 
 ```sh
 chalk service install
@@ -90,84 +75,52 @@ chalk service start
 chalk service status
 ```
 
-`make service` does the build, install, and start in one step.
-
-| command | effect |
-|---|---|
-| `chalk service install` | register the service (records your current `BLACKBOARD_*` settings) |
-| `chalk service start` / `stop` / `restart` | control it |
-| `chalk service status` | report `running`, `stopped`, or that it isn't installed |
-| `chalk service uninstall` | remove it; the board database is left alone |
-
-Because install captures the environment it runs in, set any configuration in
-the same command:
-
 ```sh
-BLACKBOARD_PORT=9000 chalk service install
+BLACKBOARD_PORT=9000 chalk service install   # reinstall to change settings
+chalk service uninstall
 ```
 
-To change settings later, run `chalk service uninstall` and install again.
-
-### systemd specifics (Linux)
-
-`chalk service install` writes `~/.config/systemd/user/com.chalk.blackboard.service`
-and enables it — per-user, no root, no `sudo`. Once installed, the unit is an
-ordinary systemd user unit and `systemctl --user` works on it directly:
+Logs:
 
 ```sh
-systemctl --user status com.chalk.blackboard
-journalctl --user -u com.chalk.blackboard -f
+tail -f ~/Library/Logs/com.chalk.blackboard.err.log    # macOS
+journalctl --user -u com.chalk.blackboard -f           # Linux
 ```
 
-Two things worth knowing about user units:
-
-- A user manager normally starts at login and stops when your last session
-  ends, which kills the board on logout. For a board that survives logout and
-  comes up at boot on a headless box, enable lingering once:
-  `sudo loginctl enable-linger "$USER"`.
-- The unit is installed with `WantedBy=default.target`. The service library's
-  stock template uses `multi-user.target`, which a user manager never
-  activates, so chalk ships its own template — a unit installed by other means
-  needs the same correction to start at login.
-
-If you installed via Homebrew on Linux, `brew services start chalk` is the
-alternative; it manages its own systemd user unit with the paths from the
-formula (`$(brew --prefix)/var/chalk/board.db`). Use one or the other, not both
-— two copies of the server on the same port will fight.
-
-### launchd specifics (macOS)
-
-The agent is written to `~/Library/LaunchAgents/com.chalk.blackboard.plist`.
-Startup messages go to stderr, so the `.err.log` file is the interesting one:
+On Linux the unit is `~/.config/systemd/user/com.chalk.blackboard.service`, so
+`systemctl --user` works on it directly. A systemd user manager stops at logout;
+to keep the board up on a headless box:
 
 ```sh
-tail -f ~/Library/Logs/com.chalk.blackboard.err.log
+sudo loginctl enable-linger "$USER"
 ```
 
-`brew services start chalk` is the Homebrew-managed alternative here too, with
-the same caveat about running only one.
+Use `brew services` or `chalk service`, not both — they install separate units
+with different database paths.
 
-### Uninstall
+### From source
+
+Go 1.27+, no CGO:
 
 ```sh
-make uninstall   # stops and removes the service, then removes the binary
+git clone https://github.com/nburns/chalk
+cd chalk
+make install        # -> ~/.local/bin/chalk, or make install PREFIX=/usr/local
+make service        # build, install, and start the background service
+make uninstall      # remove the service and the binary
 ```
 
-Homebrew installs come out with `brew services stop chalk && brew uninstall chalk`.
-Either way the board database is left in place; delete it yourself if you want
-the data gone.
+### Paths
 
-### Where things live
-
-| | source / `make install` | Homebrew |
+| | Homebrew | source / `make install` |
 |---|---|---|
-| binary | `~/.local/bin/chalk` | `$(brew --prefix)/bin/chalk` |
-| database | `~/.blackboard/board.db` | `$(brew --prefix)/var/chalk/board.db` |
-| service (macOS) | `~/Library/LaunchAgents/com.chalk.blackboard.plist` | `brew services` |
-| service (Linux) | `~/.config/systemd/user/com.chalk.blackboard.service` | `brew services` |
+| binary | `$(brew --prefix)/bin/chalk` | `~/.local/bin/chalk` |
+| database | `$(brew --prefix)/var/chalk/board.db` | `~/.blackboard/board.db` |
+| service (macOS) | `brew services` | `~/Library/LaunchAgents/com.chalk.blackboard.plist` |
+| service (Linux) | `brew services` | `~/.config/systemd/user/com.chalk.blackboard.service` |
 
-The server listens on port `8080` by default. The database path, host, and port
-are all configurable via environment variables (see [Configuration](#configuration)).
+Port, host, and database path are set with environment variables — see
+[Configuration](#configuration).
 
 For connecting Claude Code, Claude Desktop, Cursor, or any MCP-compatible client, see [SETUP.md](./SETUP.md).
 
