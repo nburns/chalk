@@ -100,7 +100,7 @@ with different database paths.
 
 ### From source
 
-Go 1.27+, no CGO:
+Go 1.27+:
 
 ```sh
 git clone https://github.com/nburns/chalk
