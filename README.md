@@ -26,63 +26,101 @@ A shared blackboard for agent coordination. Agents read and write to a common bo
 | `blocked` | dependency on something not yet available |
 | `note` | catch-all |
 
-## Setup
-
-Requires Go 1.27 or newer. Nothing else — no CGO, no system SQLite, no broker.
-
-**Build and install:**
+## Install
 
 ```sh
-git clone <repo>
-cd chalk
-make install
+brew tap nburns/chalk https://github.com/nburns/chalk
+brew install nburns/chalk/chalk
 ```
 
-That builds the binary and installs it to `~/.local/bin/chalk`. Install somewhere
-else with `make install PREFIX=/usr/local` (that path needs `sudo make install
-PREFIX=/usr/local`).
+Run it in the background (launchd on macOS, systemd on Linux):
 
-**Run it in the foreground:**
+```sh
+brew services start chalk
+```
+
+Check it:
+
+```sh
+curl -s http://127.0.0.1:8080/mcp
+brew services info chalk
+```
+
+Or run it in the foreground:
 
 ```sh
 chalk
 # blackboard listening on http://127.0.0.1:8080/mcp  db=/Users/you/.blackboard/board.db
 ```
 
-**Or run it in the background,** so the board is up whenever an agent looks for it:
+### Upgrade and uninstall
+
+```sh
+brew upgrade chalk
+brew services stop chalk
+brew uninstall chalk
+```
+
+The database is left behind; delete it yourself if you want the data gone.
+
+### Service without Homebrew
+
+`chalk service install` registers the same background service — a launchd agent
+on macOS, a systemd user unit on Linux — using the `BLACKBOARD_*` variables set
+in that shell:
 
 ```sh
 chalk service install
 chalk service start
+chalk service status
 ```
-
-This registers a per-user background service — a launchd agent on macOS, a
-systemd user unit on Linux — that starts at login and restarts if it crashes.
-`make service` does the build, install, and start in one step.
-
-| command | effect |
-|---|---|
-| `chalk service install` | register the service (records your current `BLACKBOARD_*` settings) |
-| `chalk service start` / `stop` / `restart` | control it |
-| `chalk service status` | report `running`, `stopped`, or that it isn't installed |
-| `chalk service uninstall` | remove it; the board database is left alone |
-
-Because install captures the environment it runs in, set any configuration in
-the same command:
 
 ```sh
-BLACKBOARD_PORT=9000 chalk service install
+BLACKBOARD_PORT=9000 chalk service install   # reinstall to change settings
+chalk service uninstall
 ```
 
-To change settings later, run `chalk service uninstall` and install again.
-
-**Uninstall everything:**
+Logs:
 
 ```sh
-make uninstall   # stops and removes the service, then removes the binary
+tail -f ~/Library/Logs/com.chalk.blackboard.err.log    # macOS
+journalctl --user -u com.chalk.blackboard -f           # Linux
 ```
 
-The server persists data to `~/.blackboard/board.db` by default and listens on port `8080`. Both are configurable via environment variables (see Configuration below).
+On Linux the unit is `~/.config/systemd/user/com.chalk.blackboard.service`, so
+`systemctl --user` works on it directly. A systemd user manager stops at logout;
+to keep the board up on a headless box:
+
+```sh
+sudo loginctl enable-linger "$USER"
+```
+
+Use `brew services` or `chalk service`, not both — they install separate units
+with different database paths.
+
+### From source
+
+Go 1.27+:
+
+```sh
+git clone https://github.com/nburns/chalk
+cd chalk
+make install        # -> ~/.local/bin/chalk, or make install PREFIX=/usr/local
+make service        # build, install, and start the background service
+make uninstall      # remove the service and the binary
+```
+
+### Paths
+
+| | Homebrew | source / `make install` |
+|---|---|---|
+| binary | `$(brew --prefix)/bin/chalk` | `~/.local/bin/chalk` |
+| database | `$(brew --prefix)/var/chalk/board.db` | `~/.blackboard/board.db` |
+| service (macOS) | `brew services` | `~/Library/LaunchAgents/com.chalk.blackboard.plist` |
+| service (Linux) | `brew services` | `~/.config/systemd/user/com.chalk.blackboard.service` |
+
+Port, host, and database path are set with environment variables — see
+[Configuration](#configuration).
 
 For connecting Claude Code, Claude Desktop, Cursor, or any MCP-compatible client, see [SETUP.md](./SETUP.md).
 

@@ -20,7 +20,8 @@ The server checks `Authorization: Bearer <key>` on every request and returns 401
 
 ---
 
-The blackboard server must be running before you connect any agents. See the README for build and run instructions.
+The blackboard server must be running before you connect any agents. See
+[Install](./README.md#install) in the README.
 
 ## Docker
 
@@ -64,23 +65,24 @@ docker logs -f blackboard
 
 ## Running chalk as a background service
 
-chalk installs itself into whatever service manager the platform provides —
-launchd on macOS, systemd on Linux. There is no plist or unit file to write by
-hand:
+```sh
+brew services start chalk     # Homebrew installs
+```
 
 ```sh
-chalk service install
+chalk service install         # everything else
 chalk service start
 chalk service status
 ```
 
-The service is installed per-user (`~/Library/LaunchAgents` on macOS,
-`~/.config/systemd/user` on Linux), so it needs no root, starts at login, and
-restarts if the process dies.
+Either way it is a per-user service — a launchd agent in
+`~/Library/LaunchAgents` on macOS, a systemd user unit in
+`~/.config/systemd/user` on Linux. No root, starts at login, restarts on crash.
+Use one or the other, not both: they install separate units with different
+database paths, and two servers cannot share a port.
 
-`chalk service install` records the `BLACKBOARD_*` variables set in that shell
-into the service definition, which is how the service keeps its configuration
-across restarts:
+`chalk service install` records the `BLACKBOARD_*` variables set in that shell,
+which is how the service keeps its configuration across restarts:
 
 ```sh
 BLACKBOARD_PORT=9000 BLACKBOARD_API_KEY=your-secret-key chalk service install
@@ -109,7 +111,22 @@ journalctl --user -u com.chalk.blackboard -f           # Linux
 ```
 
 Startup messages go to stderr, so the `.err.log` file is the interesting one on
-macOS.
+macOS. On Linux everything goes to the journal.
+
+**systemd.** The unit is `com.chalk.blackboard.service`, so `systemctl --user`
+drives it directly:
+
+```sh
+systemctl --user status com.chalk.blackboard
+systemctl --user restart com.chalk.blackboard
+```
+
+A user manager stops at logout, taking the board with it. To keep it up on a
+headless box:
+
+```sh
+sudo loginctl enable-linger "$USER"
+```
 
 **Removal:**
 
