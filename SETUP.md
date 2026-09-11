@@ -20,7 +20,9 @@ The server checks `Authorization: Bearer <key>` on every request and returns 401
 
 ---
 
-The blackboard server must be running before you connect any agents. See the README for build and run instructions.
+The blackboard server must be running before you connect any agents. Install it
+from the Homebrew tap or from source — see [Install](./README.md#install) in the
+README — then pick one of the ways to run it below.
 
 ## Docker
 
@@ -65,8 +67,8 @@ docker logs -f blackboard
 ## Running chalk as a background service
 
 chalk installs itself into whatever service manager the platform provides —
-launchd on macOS, systemd on Linux. There is no plist or unit file to write by
-hand:
+launchd on macOS, a systemd user unit on Linux. There is no plist or unit file
+to write by hand:
 
 ```sh
 chalk service install
@@ -77,6 +79,11 @@ chalk service status
 The service is installed per-user (`~/Library/LaunchAgents` on macOS,
 `~/.config/systemd/user` on Linux), so it needs no root, starts at login, and
 restarts if the process dies.
+
+If you installed chalk from the Homebrew tap, `brew services start chalk` is the
+alternative — it manages its own unit and takes the database path, host, and
+port from the formula rather than from your shell. Run one or the other, never
+both: two servers on the same port will fight over it.
 
 `chalk service install` records the `BLACKBOARD_*` variables set in that shell
 into the service definition, which is how the service keeps its configuration
@@ -109,7 +116,29 @@ journalctl --user -u com.chalk.blackboard -f           # Linux
 ```
 
 Startup messages go to stderr, so the `.err.log` file is the interesting one on
-macOS.
+macOS. On Linux everything goes to the journal.
+
+**systemd notes.** The installed unit is `com.chalk.blackboard.service` under
+`~/.config/systemd/user`, and `systemctl --user` drives it directly once it
+exists:
+
+```sh
+systemctl --user status com.chalk.blackboard
+systemctl --user restart com.chalk.blackboard
+```
+
+A user manager stops when your last login session ends, taking the board with
+it. On a headless or always-on machine, enable lingering once so the unit starts
+at boot and survives logout:
+
+```sh
+sudo loginctl enable-linger "$USER"
+```
+
+chalk installs the unit with `WantedBy=default.target`; the stock template from
+the underlying service library uses `multi-user.target`, which a user manager
+never activates, so a hand-written unit copied from elsewhere will silently fail
+to start at login.
 
 **Removal:**
 
